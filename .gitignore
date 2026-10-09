@@ -1,0 +1,9 @@
+build/
+dist/
+__pycache__/
+*.pyc
+*.zip
+*.xpi
+*.part
+*.arto
+host.log

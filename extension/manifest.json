@@ -1,0 +1,11 @@
+{
+  "manifest_version": 2,
+  "name": "ArtoDownloader",
+  "version": "1.0",
+  "description": "İndirmeleri yakalar ve çok parçalı indirme uygulamasına devreder.",
+  "permissions": ["downloads", "nativeMessaging", "cookies", "<all_urls>"],
+  "background": { "scripts": ["background.js"] },
+  "browser_specific_settings": {
+    "gecko": { "id": "artodownloader@local" }
+  }
+}
