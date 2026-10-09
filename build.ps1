@@ -16,9 +16,11 @@ Copy-Item $iconPng extension\icon.png -Force
 Compress-Archive -Path .\extension\manifest.json, .\extension\background.js, .\extension\icon.png -DestinationPath .\artodownloader.zip -Force
 Copy-Item .\artodownloader.zip .\artodownloader.xpi -Force
 
-# Arayüz uygulaması (pencereli + sistem tepsisi)
+# Arayüz uygulaması (Modern Dashboard + CustomTkinter + Sistem Tepsisi)
 python -m PyInstaller --noconfirm --clean --onedir --windowed --name ArtoDownloader `
-    --icon "$icon" --paths host --hidden-import ui --hidden-import pystray --hidden-import PIL `
+    --icon "$icon" --paths host `
+    --hidden-import ui --hidden-import history --hidden-import pystray --hidden-import PIL --hidden-import darkdetect `
+    --collect-all customtkinter `
     --add-data "$icon;assets" --add-data "$iconPng;assets" `
     --distpath build\dist --workpath build\work --specpath build host\app.py
 Check "ArtoDownloader derlemesi"

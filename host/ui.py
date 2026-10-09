@@ -1,4 +1,4 @@
-"""ArtoDownloader modern arayüz (tkinter, canvas tabanlı koyu tema, Sistem Tepsisi ve IPC)."""
+"""ArtoDownloader Modern Dashboard UI (CustomTkinter tabanlı)."""
 import json
 import os
 import socket
@@ -7,94 +7,68 @@ import subprocess
 import sys
 import threading
 import time
-import tkinter as tk
-from tkinter import simpledialog, ttk
 import urllib.parse
 from PIL import Image
+import customtkinter as ctk
 import pystray
+from history import HistoryManager
 
-BG = "#0f1117"
-CARD = "#171a23"
-CARD2 = "#1e2230"
-LINE = "#2a2f42"
-TEXT = "#e8eaf2"
-MUTED = "#8b91a8"
-ACCENT = "#6c8cff"
-ACCENT2 = "#9b6cff"
-GREEN = "#38d39f"
-RED = "#ff5c7a"
-AMBER = "#ffb84d"
-FONT = "Segoe UI"
+# CustomTkinter genel ayarlar
+ctk.set_appearance_mode("dark")
+ctk.set_default_color_theme("blue")
+
 IPC_PORT = 58432
 
+# Renk paleti
+COLORS = {
+    "bg": "#0f1117",
+    "sidebar": "#161922",
+    "card": "#1d212c",
+    "card_hover": "#252b3a",
+    "accent": "#4a72ff",
+    "accent_hover": "#3a62ee",
+    "green": "#2ec989",
+    "amber": "#f59e0b",
+    "red": "#ef4444",
+    "text": "#f1f3f9",
+    "text_muted": "#8b949e",
+    "border": "#282e3e",
+}
 
-def rounded(c, x1, y1, x2, y2, r, **kw):
-    pts = [
-        x1 + r, y1, x2 - r, y1, x2, y1, x2, y1 + r, x2, y2 - r, x2, y2,
-        x2 - r, y2, x1 + r, y2, x1, y2, x1, y2 - r, x1, y1 + r, x1, y1
-    ]
-    return c.create_polygon(pts, smooth=True, **kw)
-
-
-def lerp(c1, c2, t):
-    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
-    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
-    return "#%02x%02x%02x" % tuple(int(a[i] + (b[i] - a[i]) * t) for i in range(3))
-
-
-class Button(tk.Canvas):
-    def __init__(self, parent, text, command, color=ACCENT, w=130, h=38):
-        super().__init__(parent, width=w, height=h, bg=CARD, highlightthickness=0, cursor="hand2")
-        self.w, self.h, self.command, self.color, self.text = w, h, command, color, text
-        self.enabled = True
-        self.hover = False
-        self.bind("<Enter>", lambda e: self._set(hover=True))
-        self.bind("<Leave>", lambda e: self._set(hover=False))
-        self.bind("<Button-1>", lambda e: self.enabled and self.command())
-        self.draw()
-
-    def _set(self, hover):
-        self.hover = hover
-        self.draw()
-
-    def configure_btn(self, text=None, color=None, enabled=None):
-        if text is not None:
-            self.text = text
-        if color is not None:
-            self.color = color
-        if enabled is not None:
-            self.enabled = enabled
-        self.draw()
-
-    def draw(self):
-        self.delete("all")
-        col = self.color if self.enabled else LINE
-        if self.hover and self.enabled:
-            col = lerp(col, "#ffffff", 0.15)
-        rounded(self, 1, 1, self.w - 1, self.h - 1, 10, fill=col, outline="")
-        self.create_text(
-            self.w / 2, self.h / 2, text=self.text,
-            fill="#ffffff" if self.enabled else MUTED,
-            font=(FONT, 10, "bold")
-        )
-        self.config(cursor="hand2" if self.enabled else "arrow")
+EXT_COLORS = {
+    "ZIP": "#3b82f6", "RAR": "#8b5cf6", "7Z": "#6366f1",
+    "ISO": "#ec4899", "EXE": "#ef4444", "MSI": "#f43f5e",
+    "MP4": "#10b981", "MKV": "#059669", "MP3": "#14b8a6",
+    "PDF": "#f97316", "DOC": "#0284c7", "XLS": "#16a34a"
+}
 
 
-def dark_titlebar(root):
+def fmt_size(n):
+    if not n:
+        return "0 B"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{int(n)} B"
+        n /= 1024
+
+
+def fmt_time(s):
+    if not s or s <= 0:
+        return "—"
+    s = int(s)
+    h, m, sec = s // 3600, s % 3600 // 60, s % 60
+    return f"{h}s {m:02d}dk" if h else (f"{m}dk {sec:02d}sn" if m else f"{sec}sn")
+
+
+def dark_titlebar(window):
     try:
         import ctypes
-        root.update()
-        hwnd = ctypes.windll.user32.GetParent(root.winfo_id())
+        window.update()
+        hwnd = ctypes.windll.user32.GetParent(window.winfo_id())
         v = ctypes.c_int(1)
         ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(v), 4)
     except Exception:
         pass
-
-
-def fmt_time(s):
-    s = int(s)
-    h, m, sec = s // 3600, s % 3600 // 60, s % 60
-    return f"{h}s {m:02d}dk" if h else (f"{m}dk {sec:02d}sn" if m else f"{sec}sn")
 
 
 def get_icon_image():
@@ -109,413 +83,691 @@ def get_icon_image():
                 return Image.open(cand)
             except Exception:
                 pass
-    return Image.new("RGBA", (64, 64), (108, 140, 255, 255))
+    return Image.new("RGBA", (64, 64), (74, 114, 255, 255))
 
 
-def run_gui(args, Engine, fmt_size):
-    headers = {"User-Agent": args.ua or "Mozilla/5.0", "Accept": "*/*", "Accept-Encoding": "identity"}
-    if args.referer:
-        headers["Referer"] = args.referer
-    if args.cookie:
-        headers["Cookie"] = args.cookie
-    dest_dir = args.dir or os.path.join(os.path.expanduser("~"), "Downloads")
-    os.makedirs(dest_dir, exist_ok=True)
+class ArtoDownloaderApp(ctk.CTk):
+    def __init__(self, initial_args, EngineClass):
+        super().__init__()
 
-    current_engine = [Engine(args.url, dest_dir, headers, args.filename, args.connections)]
+        self.title("⚡ ArtoDownloader")
+        self.geometry("960x640")
+        self.minsize(820, 520)
+        self.configure(fg_color=COLORS["bg"])
 
-    W, H = 680, 650
-    root = tk.Tk()
-    root.title("ArtoDownloader")
-    try:
-        base = getattr(sys, "_MEIPASS", os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-        ico = os.path.join(base, "assets", "icon.ico")
-        if os.path.exists(ico):
-            root.iconbitmap(ico)
-    except Exception:
-        pass
+        self.EngineClass = EngineClass
+        self.history = HistoryManager()
+        self.active_engines = {}  # {item_id: Engine}
+        self.speed_stats = {}     # {item_id: {last_bytes, last_t, speed}}
+        self.current_filter = "all"  # all | downloading | done | paused
+        self.search_query = ""
+        self.card_widgets = {}
 
-    root.configure(bg=BG)
-    sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
-    root.geometry(f"{W}x{H}+{(sw - W) // 2}+{(sh - H) // 2}")
-    root.resizable(False, False)
-    dark_titlebar(root)
-    root.attributes("-topmost", True)
-    root.after(1200, lambda: root.attributes("-topmost", False))
-    root.lift()
-    root.focus_force()
+        self.dest_dir = initial_args.dir or os.path.join(os.path.expanduser("~"), "Downloads")
+        self.default_connections = initial_args.connections or 8
+        os.makedirs(self.dest_dir, exist_ok=True)
 
-    current_host = [urllib.parse.urlparse(args.url).netloc if args.url else ""]
-
-    # ---- Kart: başlık ----
-    head = tk.Canvas(root, width=W - 40, height=110, bg=BG, highlightthickness=0)
-    head.place(x=20, y=18)
-    # ---- Kart: ilerleme / segmentler / grafik ----
-    body = tk.Canvas(root, width=W - 40, height=340, bg=BG, highlightthickness=0)
-    body.place(x=20, y=136)
-    # ---- Butonlar ----
-    footer = tk.Frame(root, bg=BG)
-    footer.place(x=20, y=H - 62)
-
-    pause_btn = Button(footer, "Duraklat", lambda: toggle(), ACCENT, 150)
-    pause_btn.pack(side="left")
-    cancel_btn = Button(footer, "İptal", lambda: cancel(), "#3a3f55", 110)
-    cancel_btn.pack(side="left", padx=10)
-    folder_btn = Button(footer, "Klasörü Aç", lambda: open_folder(), "#3a3f55", 130)
-    file_btn = Button(footer, "Dosyayı Aç", lambda: open_file(), GREEN, 130)
-
-    speeds = []
-    state = {
-        "speed": 0.0, "last_bytes": 0, "last_t": time.time(),
-        "peak": 1.0, "phase": 0.0, "avg_sum": 0.0, "avg_n": 0
-    }
-
-    # ==================== SİSTEM TEPSİSİ (SYSTEM TRAY) ====================
-    tray_icon_holder = [None]
-
-    def show_window(icon=None, item=None):
-        root.after(0, lambda: (root.deiconify(), root.lift(), root.focus_force()))
-
-    def minimize_to_tray():
-        root.withdraw()
-
-    def prompt_new_download(icon=None, item=None):
-        def _ask():
-            show_window()
-            new_url = simpledialog.askstring("Yeni İndirme", "İndirme URL'sini yapıştırın:", parent=root)
-            if new_url and new_url.lower().startswith(("http://", "https://")):
-                start_new_download({"url": new_url})
-        root.after(0, _ask)
-
-    def quit_completely(icon=None, item=None):
-        eng = current_engine[0]
-        if eng:
-            eng.pause()
-        if tray_icon_holder[0]:
-            try:
-                tray_icon_holder[0].stop()
-            except Exception:
-                pass
-        root.after(0, root.destroy)
-
-    tray_menu = pystray.Menu(
-        pystray.MenuItem("ArtoDownloader'ı Göster", show_window, default=True),
-        pystray.MenuItem("Yeni İndirme Ekle...", prompt_new_download),
-        pystray.Menu.SEPARATOR,
-        pystray.MenuItem("Çıkış", quit_completely)
-    )
-
-    tray_img = get_icon_image()
-    tray_icon = pystray.Icon("ArtoDownloader", tray_img, "ArtoDownloader", menu=tray_menu)
-    tray_icon_holder[0] = tray_icon
-
-    threading.Thread(target=tray_icon.run, daemon=True).start()
-
-    # Kapat butonuna basıldığında tamamen çıkmak yerine tepsiye küçül
-    root.protocol("WM_DELETE_WINDOW", minimize_to_tray)
-
-    # ==================== İNDİRME YÖNETİMİ ====================
-    def toggle():
-        eng = current_engine[0]
-        if not eng.url:
-            prompt_new_download()
-        elif eng.state == "downloading":
-            eng.pause()
-        elif eng.state in ("paused", "error"):
-            eng.start()
-
-    def cancel():
-        eng = current_engine[0]
-        if eng.state == "downloading":
-            eng.cancel()
-            minimize_to_tray()
-        else:
-            if eng.filename and eng.state != "done":
-                for p in eng._paths()[1:]:
-                    if os.path.exists(p):
-                        try:
-                            os.remove(p)
-                        except Exception:
-                            pass
-            minimize_to_tray()
-
-    def open_folder():
-        eng = current_engine[0]
-        if os.name == "nt" and eng.filename:
-            subprocess.Popen(["explorer", "/select,", os.path.join(dest_dir, eng.filename)])
-
-    def open_file():
-        eng = current_engine[0]
-        if os.name == "nt" and eng.filename:
-            os.startfile(os.path.join(dest_dir, eng.filename))
-
-    def init_engine(eng):
+        # İkon ayarı
         try:
-            eng.probe()
-            eng.prepare()
-            eng.start()
-        except Exception as e:
-            eng.error = str(e)
-            eng.state = "error"
-
-    if args.url:
-        threading.Thread(target=lambda: init_engine(current_engine[0]), daemon=True).start()
-    else:
-        current_engine[0].state = "paused"
-
-    def start_new_download(msg):
-        url = msg.get("url", "")
-        if not url:
-            return
-        eng = current_engine[0]
-        if eng and eng.state == "downloading":
-            eng.pause()
-
-        new_h = dict(headers)
-        if msg.get("referrer"):
-            new_h["Referer"] = msg.get("referrer")
-        if msg.get("cookie"):
-            new_h["Cookie"] = msg.get("cookie")
-        if msg.get("userAgent"):
-            new_h["User-Agent"] = msg.get("userAgent")
-
-        new_eng = Engine(url, dest_dir, new_h, msg.get("filename", ""), args.connections)
-        current_engine[0] = new_eng
-        current_host[0] = urllib.parse.urlparse(url).netloc
-        speeds.clear()
-        state["speed"] = 0.0
-        state["last_bytes"] = 0
-        state["last_t"] = time.time()
-        state["peak"] = 1.0
-
-        if not pause_btn.winfo_ismapped():
-            pause_btn.pack(side="left")
-        cancel_btn.configure_btn("İptal")
-        folder_btn.pack_forget()
-        file_btn.pack_forget()
-
-        show_window()
-        threading.Thread(target=lambda: init_engine(new_eng), daemon=True).start()
-
-    # ==================== YEREL IPC SUNUCUSU (BROWSER'DAN GÖNDERİLENLER) ====================
-    def run_ipc_server():
-        try:
-            srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv.bind(("127.0.0.1", IPC_PORT))
-            srv.listen(5)
-            while True:
-                conn, _ = srv.accept()
-                try:
-                    raw_len = conn.recv(4)
-                    if len(raw_len) == 4:
-                        length = struct.unpack("=I", raw_len)[0]
-                        data = b""
-                        while len(data) < length:
-                            chunk = conn.recv(length - len(data))
-                            if not chunk:
-                                break
-                            data += chunk
-                        msg = json.loads(data.decode("utf-8"))
-                        root.after(0, lambda m=msg: start_new_download(m))
-                        resp = json.dumps({"ok": True}).encode("utf-8")
-                        conn.sendall(struct.pack("=I", len(resp)) + resp)
-                except Exception:
-                    pass
-                finally:
-                    conn.close()
+            base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            ico = os.path.join(base, "assets", "icon.ico")
+            if os.path.exists(ico):
+                self.iconbitmap(ico)
         except Exception:
             pass
 
-    threading.Thread(target=run_ipc_server, daemon=True).start()
+        dark_titlebar(self)
 
-    # ==================== ÇİZİM VE GÜNCELLEME ====================
-    def draw_header(color, status):
-        eng = current_engine[0]
-        head.delete("all")
-        rounded(head, 0, 0, W - 40, 110, 16, fill=CARD, outline="")
-        name = eng.filename or "Bağlanılıyor…"
-        ext = os.path.splitext(name)[1].lstrip(".").upper()[:4] or "FILE"
-        rounded(head, 20, 25, 80, 85, 14, fill=lerp(color, BG, 0.65), outline="")
-        rounded(head, 20, 25, 80, 85, 14, fill="", outline=color, width=2)
-        head.create_text(50, 55, text=ext, fill=color, font=(FONT, 11, "bold"))
-        shown = name if len(name) < 44 else name[:41] + "…"
-        head.create_text(100, 40, text=shown, anchor="w", fill=TEXT, font=(FONT, 15, "bold"))
-        head.create_text(100, 66, text=current_host[0], anchor="w", fill=MUTED, font=(FONT, 10))
-        bw = 12 + len(status) * 8
-        rounded(head, 98, 78, 98 + bw, 100, 11, fill=lerp(color, CARD, 0.78), outline="")
-        head.create_text(98 + bw / 2, 89, text=status, fill=color, font=(FONT, 9, "bold"))
+        # Layout kurulumu
+        self.setup_ui()
 
-    def draw_body(color, done, total, speed, pct):
-        eng = current_engine[0]
-        c = body
-        c.delete("all")
-        bw = W - 40
-        # --- büyük hız + yüzde ---
-        rounded(c, 0, 0, bw, 130, 16, fill=CARD, outline="")
-        c.create_text(28, 30, text="İNDİRME HIZI", anchor="w", fill=MUTED, font=(FONT, 9, "bold"))
-        sp = fmt_size(speed) + "/s"
-        c.create_text(28, 66, text=sp, anchor="w", fill=TEXT, font=(FONT, 28, "bold"))
-        c.create_text(bw - 28, 30, text="TAMAMLANAN", anchor="e", fill=MUTED, font=(FONT, 9, "bold"))
-        c.create_text(
-            bw - 28, 66, text=f"%{pct:.1f}" if total else "—", anchor="e", fill=color,
-            font=(FONT, 28, "bold")
-        )
-        # ilerleme çubuğu
-        x1, x2, y1, y2 = 28, bw - 28, 102, 116
-        rounded(c, x1, y1, x2, y2, 7, fill=CARD2, outline="")
-        if total:
-            fw = max(14, (x2 - x1) * pct / 100) if pct > 0 else 0
-            if fw:
-                steps = 24
-                for i in range(steps):
-                    sx1 = x1 + fw * i / steps
-                    sx2 = x1 + fw * (i + 1) / steps
-                    col = lerp(ACCENT, ACCENT2, i / steps) if eng.state != "done" else GREEN
-                    if i == 0:
-                        rounded(c, x1, y1, x1 + max(14, fw / steps + 8), y2, 7, fill=col, outline="")
-                    else:
-                        c.create_rectangle(sx1, y1, sx2 + 1, y2, fill=col, outline="")
-                if fw >= 14:
-                    rounded(
-                        c, x1 + fw - 14, y1, x1 + fw, y2, 7,
-                        fill=lerp(ACCENT, ACCENT2, 1) if eng.state != "done" else GREEN, outline=""
-                    )
-        else:
-            ph = state["phase"] % 1.0
-            sx = x1 + (x2 - x1 - 80) * ph
-            rounded(c, sx, y1, sx + 80, y2, 7, fill=ACCENT, outline="")
+        # Sistem tepsisi kurulumu
+        self.setup_tray()
 
-        # --- segment haritası ---
-        top = 144
-        rounded(c, 0, top, bw, top + 70, 16, fill=CARD, outline="")
-        c.create_text(28, top + 20, text="PARÇA HARİTASI", anchor="w", fill=MUTED, font=(FONT, 9, "bold"))
-        nseg = sum(1 for s in eng.segs if s.active) if eng.resumable else (1 if eng.state == "downloading" else 0)
-        c.create_text(bw - 28, top + 20, text=f"{nseg} aktif bağlantı", anchor="e", fill=MUTED, font=(FONT, 9))
-        mx1, mx2, my1, my2 = 28, bw - 28, top + 36, top + 54
-        rounded(c, mx1, my1, mx2, my2, 5, fill=CARD2, outline="")
-        if eng.resumable and total:
-            with eng.lock:
-                segs = [(s.start, s.end, s.pos, s.active) for s in eng.segs]
-            span = mx2 - mx1
-            for st, en, pos, act in sorted(segs):
-                a = mx1 + span * st / total
-                b = mx1 + span * (min(pos, en + 1)) / total
-                e = mx1 + span * (en + 1) / total
-                col = ACCENT if act else (GREEN if pos > en else MUTED)
-                if b - a >= 1:
-                    c.create_rectangle(a, my1 + 2, b, my2 - 2, fill=col, outline="")
-                if act and e - b > 1:
-                    c.create_rectangle(b, my1 + 2, min(e, b + 3), my2 - 2, fill="#ffffff", outline="")
-                if a > mx1 + 1:
-                    c.create_line(a, my1, a, my2, fill=BG)
+        # IPC sunucusu (tarayıcıdan gelen indirmeler)
+        self.start_ipc_server()
 
-        # --- hız grafiği ---
-        gtop = 228
-        rounded(c, 0, gtop, bw, gtop + 112, 16, fill=CARD, outline="")
-        c.create_text(28, gtop + 20, text="HIZ GRAFİĞİ", anchor="w", fill=MUTED, font=(FONT, 9, "bold"))
-        avg = state["avg_sum"] / state["avg_n"] if state["avg_n"] else 0
-        c.create_text(
-            bw - 28, gtop + 20, text=f"ort. {fmt_size(avg)}/s   •   zirve {fmt_size(state['peak'])}/s",
-            anchor="e", fill=MUTED, font=(FONT, 9)
-        )
-        gx1, gx2, gy1, gy2 = 28, bw - 28, gtop + 38, gtop + 98
-        for i in range(4):
-            y = gy1 + (gy2 - gy1) * i / 3
-            c.create_line(gx1, y, gx2, y, fill=LINE, dash=(2, 4))
-        if len(speeds) > 1:
-            peak = max(max(speeds), 1.0) * 1.15
-            n = 90
-            pts = []
-            data = speeds[-n:]
-            for i, v in enumerate(data):
-                x = gx2 - (len(data) - 1 - i) * (gx2 - gx1) / (n - 1)
-                y = gy2 - (gy2 - gy1) * v / peak
-                pts.append((x, y))
-            poly = [pts[0][0], gy2] + [v for p in pts for v in p] + [pts[-1][0], gy2]
-            c.create_polygon(poly, fill=lerp(color, CARD, 0.8), outline="")
-            c.create_line([v for p in pts for v in p], fill=color, width=2, smooth=True)
-            c.create_oval(
-                pts[-1][0] - 4, pts[-1][1] - 4, pts[-1][0] + 4, pts[-1][1] + 4,
-                fill=color, outline=CARD, width=2
+        # İlk argüman varsa indirme ekle
+        if initial_args.url:
+            self.add_download(
+                url=initial_args.url,
+                filename=initial_args.filename,
+                cookie=initial_args.cookie,
+                referer=initial_args.referer,
+                ua=initial_args.ua
             )
 
-    def draw_stats(done, total, speed):
-        eng = current_engine[0]
-        stats.delete("all")
-        items = [
-            ("BOYUT", fmt_size(total) if total else "Bilinmiyor"),
-            ("İNDİRİLEN", fmt_size(done)),
-            ("KALAN SÜRE", fmt_time((total - done) / speed) if speed > 1 and total and eng.state == "downloading" else "—"),
-            ("KONUM", "İndirilenler")
-        ]
-        cw = (W - 40 - 30) / 4
-        for i, (k, v) in enumerate(items):
-            x = i * (cw + 10)
-            rounded(stats, x, 0, x + cw, 58, 12, fill=CARD, outline="")
-            stats.create_text(x + 14, 17, text=k, anchor="w", fill=MUTED, font=(FONT, 8, "bold"))
-            stats.create_text(x + 14, 39, text=v, anchor="w", fill=TEXT, font=(FONT, 11, "bold"))
+        # Düzenli UI güncelleme döngüsü
+        self.after(300, self.update_loop)
 
-    stats = tk.Canvas(root, width=W - 40, height=58, bg=BG, highlightthickness=0)
-    stats.place(x=20, y=H - 132)
+        # Kapatma davranışı
+        self.protocol("WM_DELETE_WINDOW", self.minimize_to_tray)
 
-    def tick():
-        eng = current_engine[0]
-        now = time.time()
-        st = eng.state
-        done = eng.downloaded()
-        total = eng.total
-        dt = now - state["last_t"]
-        if dt >= 0.5:
-            inst = max(0, eng.session_bytes - state["last_bytes"]) / dt
-            state["speed"] = inst if state["speed"] == 0 else state["speed"] * 0.6 + inst * 0.4
-            state["last_bytes"], state["last_t"] = eng.session_bytes, now
-            if st == "downloading":
-                speeds.append(state["speed"])
-                state["avg_sum"] += state["speed"]
-                state["avg_n"] += 1
-                state["peak"] = max(state["peak"], state["speed"])
-            else:
-                state["speed"] = 0.0
-                speeds.append(0.0)
-        speed = state["speed"] if st == "downloading" else 0
-        pct = done * 100 / total if total else 0
-        state["phase"] += 0.02
+    def setup_ui(self):
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
-        color, label = ACCENT, "BAĞLANIYOR"
-        if not eng.url:
-            color, label = ACCENT, "HAZIR (BEKLİYOR)"
-            pause_btn.configure_btn("Yeni İndirme", ACCENT, True)
-            cancel_btn.configure_btn("Tepsiye Küçült", "#3a3f55", True)
-        elif st == "downloading":
-            color, label = ACCENT, "İNDİRİLİYOR"
-            pause_btn.configure_btn("Duraklat", ACCENT, eng.resumable)
-            cancel_btn.configure_btn("İptal", "#3a3f55", True)
-        elif st == "paused":
-            color, label = AMBER, "DURAKLATILDI"
-            pause_btn.configure_btn("Devam Et", GREEN, True)
-            cancel_btn.configure_btn("İptal", "#3a3f55", True)
-        elif st == "error":
-            color, label = RED, "HATA: " + (eng.error or "")[:40]
-            pause_btn.configure_btn("Tekrar Dene", AMBER, True)
-            cancel_btn.configure_btn("Kapat", "#3a3f55", True)
-        elif st == "done":
-            color, label = GREEN, "TAMAMLANDI"
-            pct = 100
-            if pause_btn.winfo_ismapped():
-                pause_btn.pack_forget()
-                cancel_btn.configure_btn("Kapat")
-                folder_btn.pack(side="left")
-                file_btn.pack(side="left", padx=10)
-        elif st == "connecting":
-            pause_btn.configure_btn("Duraklat", ACCENT, False)
+        # ---------------- SOL KENAR ÇUBUĞU (SIDEBAR) ----------------
+        self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color=COLORS["sidebar"])
+        self.sidebar.grid(row=0, column=0, sticky="nsew")
+        self.sidebar.grid_rowconfigure(5, weight=1)
 
-        draw_header(color, label)
-        draw_body(color, done, total, speed, pct)
-        draw_stats(done, total, speed)
-        root.title(
-            f"{pct:.0f}% • {fmt_size(speed)}/s — ArtoDownloader" if st == "downloading" else "ArtoDownloader"
+        # Logo ve Başlık
+        self.logo_label = ctk.CTkLabel(
+            self.sidebar,
+            text="⚡ ArtoDownloader",
+            font=ctk.CTkFont(family="Segoe UI", size=20, weight="bold"),
+            text_color=COLORS["text"]
         )
-        root.after(250, tick)
+        self.logo_label.grid(row=0, column=0, padx=20, pady=(24, 4), sticky="w")
 
-    tick()
-    root.mainloop()
+        self.subtitle_label = ctk.CTkLabel(
+            self.sidebar,
+            text="IDM Hızlandırıcı • v1.1",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=COLORS["text_muted"]
+        )
+        self.subtitle_label.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="w")
+
+        # Filtre Butonları
+        self.nav_btns = {}
+        filters = [
+            ("all", "📥 Tüm İndirmeler"),
+            ("downloading", "⬇️ Aktif İndirilenler"),
+            ("done", "✅ Tamamlananlar"),
+            ("paused", "⏸️ Duraklatılanlar")
+        ]
+
+        for idx, (f_key, f_label) in enumerate(filters, start=2):
+            btn = ctk.CTkButton(
+                self.sidebar,
+                text=f_label,
+                anchor="w",
+                font=ctk.CTkFont(family="Segoe UI", size=13),
+                fg_color=COLORS["card"] if f_key == "all" else "transparent",
+                text_color=COLORS["text"],
+                hover_color=COLORS["card_hover"],
+                height=38,
+                corner_radius=8,
+                command=lambda k=f_key: self.set_filter(k)
+            )
+            btn.grid(row=idx, column=0, padx=12, pady=4, sticky="ew")
+            self.nav_btns[f_key] = btn
+
+        # Alt Butonlar (Sidebar Footer)
+        self.btn_folder = ctk.CTkButton(
+            self.sidebar,
+            text="📁 İndirilenler Klasörü",
+            anchor="w",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color="transparent",
+            text_color=COLORS["text_muted"],
+            hover_color=COLORS["card_hover"],
+            height=34,
+            command=self.open_downloads_dir
+        )
+        self.btn_folder.grid(row=6, column=0, padx=12, pady=4, sticky="ew")
+
+        self.btn_quit = ctk.CTkButton(
+            self.sidebar,
+            text="❌ Uygulamayı Kapat",
+            anchor="w",
+            font=ctk.CTkFont(family="Segoe UI", size=12, weight="bold"),
+            fg_color="transparent",
+            text_color="#f87171",
+            hover_color="#3b1d24",
+            height=34,
+            command=self.quit_completely
+        )
+        self.btn_quit.grid(row=7, column=0, padx=12, pady=(4, 16), sticky="ew")
+
+        # ---------------- SAĞ ANA ALAN (MAIN CONTENT) ----------------
+        self.main_area = ctk.CTkFrame(self, corner_radius=0, fg_color=COLORS["bg"])
+        self.main_area.grid(row=0, column=1, sticky="nsew", padx=16, pady=16)
+        self.main_area.grid_columnconfigure(0, weight=1)
+        self.main_area.grid_rowconfigure(1, weight=1)
+
+        # Üst Araç Çubuğu (Top Bar)
+        self.top_bar = ctk.CTkFrame(self.main_area, fg_color="transparent")
+        self.top_bar.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        self.top_bar.grid_columnconfigure(1, weight=1)
+
+        # + Yeni İndirme Butonu
+        self.btn_add = ctk.CTkButton(
+            self.top_bar,
+            text="➕ Yeni İndirme Ekle",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            fg_color=COLORS["accent"],
+            hover_color=COLORS["accent_hover"],
+            height=38,
+            corner_radius=8,
+            command=self.prompt_add_download
+        )
+        self.btn_add.grid(row=0, column=0, padx=(0, 12), sticky="w")
+
+        # Arama Kutusu
+        self.search_entry = ctk.CTkEntry(
+            self.top_bar,
+            placeholder_text="🔍 Dosyalarda ara...",
+            font=ctk.CTkFont(family="Segoe UI", size=13),
+            fg_color=COLORS["card"],
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            height=38,
+            corner_radius=8
+        )
+        self.search_entry.grid(row=0, column=1, sticky="ew", padx=(0, 12))
+        self.search_entry.bind("<KeyRelease>", self.on_search)
+
+        # Tamamlananları Temizle
+        self.btn_clean = ctk.CTkButton(
+            self.top_bar,
+            text="🧹 Temizle",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color=COLORS["card"],
+            hover_color=COLORS["card_hover"],
+            text_color=COLORS["text_muted"],
+            width=80,
+            height=38,
+            corner_radius=8,
+            command=self.clear_completed
+        )
+        self.btn_clean.grid(row=0, column=2, padx=(0, 8))
+
+        # Tepsiye Küçült Butonu
+        self.btn_minimize = ctk.CTkButton(
+            self.top_bar,
+            text="🗕 Tepsiye Küçült",
+            font=ctk.CTkFont(family="Segoe UI", size=12),
+            fg_color=COLORS["card"],
+            hover_color=COLORS["card_hover"],
+            text_color=COLORS["text_muted"],
+            width=110,
+            height=38,
+            corner_radius=8,
+            command=self.minimize_to_tray
+        )
+        self.btn_minimize.grid(row=0, column=3)
+
+        # Kaydırılabilir İndirme Listesi (Scrollable Frame)
+        self.scroll_list = ctk.CTkScrollableFrame(
+            self.main_area,
+            fg_color="transparent",
+            corner_radius=0
+        )
+        self.scroll_list.grid(row=1, column=0, sticky="nsew")
+        self.scroll_list.grid_columnconfigure(0, weight=1)
+
+        # İlk render
+        self.render_downloads()
+
+    def set_filter(self, f_key):
+        self.current_filter = f_key
+        for k, btn in self.nav_btns.items():
+            btn.configure(fg_color=COLORS["card"] if k == f_key else "transparent")
+        self.render_downloads()
+
+    def on_search(self, event=None):
+        self.search_query = self.search_entry.get().strip().lower()
+        self.render_downloads()
+
+    def render_downloads(self):
+        # Önceki kartları temizle
+        for widget in self.scroll_list.winfo_children():
+            widget.destroy()
+        self.card_widgets.clear()
+
+        items = self.history.items
+
+        # Filtrele
+        if self.current_filter != "all":
+            items = [it for it in items if it.get("status") == self.current_filter]
+
+        # Arama
+        if self.search_query:
+            items = [it for it in items if self.search_query in it.get("filename", "").lower()]
+
+        if not items:
+            empty_frame = ctk.CTkFrame(self.scroll_list, fg_color="transparent")
+            empty_frame.pack(pady=80, fill="both", expand=True)
+
+            msg = "Henüz bir indirme yok."
+            if self.search_query:
+                msg = f"'{self.search_query}' ile eşleşen indirme bulunamadı."
+            elif self.current_filter != "all":
+                msg = f"Bu kategoride indirme yok."
+
+            lbl = ctk.CTkLabel(
+                empty_frame,
+                text=msg,
+                font=ctk.CTkFont(family="Segoe UI", size=15),
+                text_color=COLORS["text_muted"]
+            )
+            lbl.pack(pady=10)
+
+            if not self.search_query and self.current_filter == "all":
+                sub = ctk.CTkLabel(
+                    empty_frame,
+                    text="LibreWolf'tan bir dosya indirin veya yukarıdaki '+ Yeni İndirme Ekle' butonunu kullanın.",
+                    font=ctk.CTkFont(family="Segoe UI", size=12),
+                    text_color=COLORS["text_muted"]
+                )
+                sub.pack(pady=4)
+            return
+
+        for item in items:
+            self.create_download_card(item)
+
+    def create_download_card(self, item):
+        item_id = item["id"]
+        fname = item.get("filename") or "İndirme"
+        status = item.get("status", "paused")
+        total = item.get("total_bytes", 0)
+        done = item.get("downloaded_bytes", 0)
+
+        ext = os.path.splitext(fname)[1].lstrip(".").upper()[:4] or "FILE"
+        ext_color = EXT_COLORS.get(ext, COLORS["accent"])
+
+        card = ctk.CTkFrame(
+            self.scroll_list,
+            fg_color=COLORS["card"],
+            corner_radius=10,
+            border_width=1,
+            border_color=COLORS["border"]
+        )
+        card.pack(fill="x", pady=6, padx=4)
+        card.grid_columnconfigure(1, weight=1)
+
+        # Uzantı Rozeti
+        badge = ctk.CTkLabel(
+            card,
+            text=ext,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color=ext_color,
+            text_color="#ffffff",
+            width=54,
+            height=54,
+            corner_radius=8
+        )
+        badge.grid(row=0, column=0, rowspan=2, padx=14, pady=14)
+
+        # Bilgi Alanı (Orta)
+        info_frame = ctk.CTkFrame(card, fg_color="transparent")
+        info_frame.grid(row=0, column=1, sticky="ew", padx=(0, 14), pady=(12, 4))
+        info_frame.grid_columnconfigure(0, weight=1)
+
+        title = ctk.CTkLabel(
+            info_frame,
+            text=fname if len(fname) < 55 else fname[:52] + "...",
+            font=ctk.CTkFont(family="Segoe UI", size=14, weight="bold"),
+            text_color=COLORS["text"],
+            anchor="w"
+        )
+        title.grid(row=0, column=0, sticky="w")
+
+        # İlerleme Çubuğu
+        pct = (done / total) if (total and total > 0) else 0.0
+        pct = max(0.0, min(1.0, pct))
+        if status == "done":
+            pct = 1.0
+
+        pbar = ctk.CTkProgressBar(
+            info_frame,
+            height=6,
+            corner_radius=3,
+            progress_color=COLORS["green"] if status == "done" else COLORS["accent"]
+        )
+        pbar.set(pct)
+        pbar.grid(row=1, column=0, sticky="ew", pady=(6, 4))
+
+        # Alt Durum Satırı
+        status_lbl = ctk.CTkLabel(
+            info_frame,
+            text=self.format_status_text(item),
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=COLORS["text_muted"],
+            anchor="w"
+        )
+        status_lbl.grid(row=2, column=0, sticky="w")
+
+        # Sağ Butonlar
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.grid(row=0, column=2, rowspan=2, padx=14, pady=14, sticky="e")
+
+        actions = self.get_card_actions(item)
+        for act_text, act_cmd, act_col in actions:
+            b = ctk.CTkButton(
+                btn_frame,
+                text=act_text,
+                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                fg_color=act_col,
+                hover_color=COLORS["card_hover"],
+                text_color=COLORS["text"],
+                width=72,
+                height=30,
+                corner_radius=6,
+                command=act_cmd
+            )
+            b.pack(side="left", padx=3)
+
+        self.card_widgets[item_id] = {
+            "pbar": pbar,
+            "status_lbl": status_lbl,
+            "card": card,
+            "btn_frame": btn_frame
+        }
+
+    def format_status_text(self, item):
+        status = item.get("status")
+        total = item.get("total_bytes", 0)
+        done = item.get("downloaded_bytes", 0)
+        speed = item.get("speed", 0)
+
+        if status == "downloading":
+            pct = (done * 100 / total) if total else 0
+            eta = ""
+            if speed > 0 and total:
+                rem = max(0, total - done)
+                eta = f" • Kalan: {fmt_time(rem / speed)}"
+            return f"{fmt_size(done)} / {fmt_size(total)} (%{pct:.1f}) • ⚡ {fmt_size(speed)}/s{eta}"
+        elif status == "done":
+            return f"{fmt_size(total)} • Tamamlandı • {item.get('created_at', '')}"
+        elif status == "paused":
+            return f"{fmt_size(done)} / {fmt_size(total)} • Duraklatıldı"
+        elif status == "error":
+            return f"Hata: {item.get('error', 'Bilinmeyen hata')}"
+        return f"{fmt_size(done)} / {fmt_size(total)}"
+
+    def get_card_actions(self, item):
+        item_id = item["id"]
+        status = item.get("status")
+        filepath = item.get("filepath", "")
+
+        actions = []
+        if status == "downloading":
+            actions.append(("⏸ Duraklat", lambda: self.pause_download(item_id), COLORS["border"]))
+            actions.append(("❌ İptal", lambda: self.cancel_download(item_id), "#7f1d1d"))
+        elif status == "paused":
+            actions.append(("▶ Devam", lambda: self.resume_download(item_id), COLORS["accent"]))
+            actions.append(("🗑 Sil", lambda: self.delete_download(item_id), COLORS["border"]))
+        elif status == "done":
+            actions.append(("📁 Klasör", lambda: self.open_in_folder(filepath), COLORS["border"]))
+            actions.append(("▶ Aç", lambda: self.open_file(filepath), COLORS["green"]))
+            actions.append(("🗑 Sil", lambda: self.delete_download(item_id), COLORS["border"]))
+        elif status == "error":
+            actions.append(("🔄 Tekrar", lambda: self.resume_download(item_id), COLORS["accent"]))
+            actions.append(("🗑 Sil", lambda: self.delete_download(item_id), COLORS["border"]))
+        return actions
+
+    # ---------------- İNDİRME AKSİYONLARI ----------------
+    def prompt_add_download(self):
+        dialog = ctk.CTkInputDialog(text="İndirme bağlantısını (URL) girin:", title="Yeni İndirme Ekle")
+        url = dialog.get_input()
+        if url and url.strip().lower().startswith(("http://", "https://")):
+            self.add_download(url=url.strip())
+
+    def add_download(self, url, filename="", cookie="", referer="", ua=""):
+        item_id = str(int(time.time() * 1000))
+        fname = filename or url.split("/")[-1].split("?")[0] or f"download_{item_id[:6]}"
+
+        item = {
+            "id": item_id,
+            "url": url,
+            "filename": fname,
+            "filepath": os.path.join(self.dest_dir, fname),
+            "total_bytes": 0,
+            "downloaded_bytes": 0,
+            "status": "downloading",
+            "created_at": time.strftime("%d.%m.%Y %H:%M"),
+            "speed": 0,
+            "cookie": cookie,
+            "referer": referer,
+            "ua": ua,
+            "error": None
+        }
+
+        self.history.add(item)
+        self.render_downloads()
+        self.show_window()
+
+        # Engine başlat
+        headers = {"User-Agent": ua or "Mozilla/5.0", "Accept": "*/*", "Accept-Encoding": "identity"}
+        if referer:
+            headers["Referer"] = referer
+        if cookie:
+            headers["Cookie"] = cookie
+
+        eng = self.EngineClass(url, self.dest_dir, headers, fname, self.default_connections)
+        self.active_engines[item_id] = eng
+        self.speed_stats[item_id] = {"last_bytes": 0, "last_t": time.time(), "speed": 0}
+
+        def run_task():
+            try:
+                eng.probe()
+                eng.prepare()
+                # Dosya adını sunucunun verdiği nihai ada güncelle
+                self.history.update(
+                    item_id,
+                    filename=eng.filename,
+                    filepath=os.path.join(self.dest_dir, eng.filename),
+                    total_bytes=eng.total
+                )
+                eng.start()
+            except Exception as e:
+                eng.error = str(e)
+                eng.state = "error"
+                self.history.update(item_id, status="error", error=str(e))
+
+        threading.Thread(target=run_task, daemon=True).start()
+
+    def pause_download(self, item_id):
+        eng = self.active_engines.get(item_id)
+        if eng:
+            eng.pause()
+            self.history.update(item_id, status="paused", speed=0)
+            self.render_downloads()
+
+    def resume_download(self, item_id):
+        item = next((it for it in self.history.items if it["id"] == item_id), None)
+        if not item:
+            return
+        eng = self.active_engines.get(item_id)
+        if not eng:
+            headers = {"User-Agent": item.get("ua") or "Mozilla/5.0", "Accept": "*/*", "Accept-Encoding": "identity"}
+            if item.get("referer"):
+                headers["Referer"] = item.get("referer")
+            if item.get("cookie"):
+                headers["Cookie"] = item.get("cookie")
+            eng = self.EngineClass(item["url"], self.dest_dir, headers, item.get("filename"), self.default_connections)
+            self.active_engines[item_id] = eng
+            self.speed_stats[item_id] = {"last_bytes": 0, "last_t": time.time(), "speed": 0}
+
+            def run_resume():
+                try:
+                    eng.probe()
+                    eng.prepare()
+                    eng.start()
+                except Exception as e:
+                    eng.error = str(e)
+                    eng.state = "error"
+                    self.history.update(item_id, status="error", error=str(e))
+
+            threading.Thread(target=run_resume, daemon=True).start()
+        else:
+            eng.start()
+
+        self.history.update(item_id, status="downloading", error=None)
+        self.render_downloads()
+
+    def cancel_download(self, item_id):
+        eng = self.active_engines.get(item_id)
+        if eng:
+            eng.cancel()
+        self.history.remove(item_id, delete_file=True)
+        if item_id in self.active_engines:
+            del self.active_engines[item_id]
+        if item_id in self.speed_stats:
+            del self.speed_stats[item_id]
+        self.render_downloads()
+
+    def delete_download(self, item_id):
+        eng = self.active_engines.get(item_id)
+        if eng:
+            eng.cancel()
+        self.history.remove(item_id, delete_file=False)
+        if item_id in self.active_engines:
+            del self.active_engines[item_id]
+        self.render_downloads()
+
+    def clear_completed(self):
+        self.history.clear_completed()
+        self.render_downloads()
+
+    def open_in_folder(self, filepath):
+        if filepath and os.path.exists(filepath):
+            subprocess.Popen(["explorer", "/select,", filepath])
+        elif os.path.exists(self.dest_dir):
+            subprocess.Popen(["explorer", self.dest_dir])
+
+    def open_file(self, filepath):
+        if filepath and os.path.exists(filepath):
+            os.startfile(filepath)
+
+    def open_downloads_dir(self):
+        if os.path.exists(self.dest_dir):
+            subprocess.Popen(["explorer", self.dest_dir])
+
+    # ---------------- CANLI GÜNCELLEME DÖNGÜSÜ ----------------
+    def update_loop(self):
+        now = time.time()
+        needs_rerender = False
+
+        for item_id, eng in list(self.active_engines.items()):
+            item = next((it for it in self.history.items if it["id"] == item_id), None)
+            if not item:
+                continue
+
+            st = eng.state
+            done = eng.downloaded()
+            total = eng.total
+
+            # Hız hesapla
+            stat = self.speed_stats.get(item_id, {"last_bytes": 0, "last_t": now, "speed": 0})
+            dt = now - stat["last_t"]
+            if dt >= 0.5:
+                inst_speed = max(0, eng.session_bytes - stat["last_bytes"]) / dt
+                stat["speed"] = inst_speed if stat["speed"] == 0 else (stat["speed"] * 0.6 + inst_speed * 0.4)
+                stat["last_bytes"] = eng.session_bytes
+                stat["last_t"] = now
+
+            speed = stat["speed"] if st == "downloading" else 0
+
+            # Verileri güncelle
+            item["downloaded_bytes"] = done
+            if total > 0:
+                item["total_bytes"] = total
+            item["speed"] = speed
+
+            old_st = item.get("status")
+            if st != old_st:
+                item["status"] = st
+                needs_rerender = True
+
+            # UI kartını doğrudan güncelle
+            widgets = self.card_widgets.get(item_id)
+            if widgets:
+                pct = (done / total) if (total and total > 0) else 0.0
+                widgets["pbar"].set(max(0.0, min(1.0, pct)))
+                widgets["status_lbl"].configure(text=self.format_status_text(item))
+
+            if st in ("done", "error", "cancelled") and item_id in self.active_engines:
+                self.history.update(
+                    item_id,
+                    status=st,
+                    downloaded_bytes=done,
+                    total_bytes=total,
+                    error=eng.error
+                )
+                if st == "done":
+                    del self.active_engines[item_id]
+                    needs_rerender = True
+
+        if needs_rerender:
+            self.render_downloads()
+
+        self.after(400, self.update_loop)
+
+    # ---------------- SİSTEM TEPSİSİ & PENCERE KONTROLÜ ----------------
+    def setup_tray(self):
+        tray_img = get_icon_image()
+        tray_menu = pystray.Menu(
+            pystray.MenuItem("ArtoDownloader'ı Göster", self.show_window, default=True),
+            pystray.MenuItem("Yeni İndirme Ekle...", lambda: self.after(0, self.prompt_add_download)),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Tamamen Çıkış", self.quit_completely)
+        )
+        self.tray = pystray.Icon("ArtoDownloader", tray_img, "ArtoDownloader", menu=tray_menu)
+        threading.Thread(target=self.tray.run, daemon=True).start()
+
+    def show_window(self, icon=None, item=None):
+        self.after(0, lambda: (self.deiconify(), self.lift(), self.focus_force()))
+
+    def minimize_to_tray(self):
+        self.withdraw()
+
+    def quit_completely(self, icon=None, item=None):
+        for eng in self.active_engines.values():
+            try:
+                eng.pause()
+            except Exception:
+                pass
+        if hasattr(self, "tray") and self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
+        self.after(0, self.destroy)
+
+    # ---------------- YEREL IPC SUNUCUSU ----------------
+    def start_ipc_server(self):
+        def run_server():
+            try:
+                srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                srv.bind(("127.0.0.1", IPC_PORT))
+                srv.listen(5)
+                while True:
+                    conn, _ = srv.accept()
+                    try:
+                        raw_len = conn.recv(4)
+                        if len(raw_len) == 4:
+                            length = struct.unpack("=I", raw_len)[0]
+                            data = b""
+                            while len(data) < length:
+                                chunk = conn.recv(length - len(data))
+                                if not chunk:
+                                    break
+                                data += chunk
+                            msg = json.loads(data.decode("utf-8"))
+                            self.after(0, lambda m=msg: self.add_download(
+                                url=m.get("url", ""),
+                                filename=m.get("filename", ""),
+                                cookie=m.get("cookie", ""),
+                                referer=m.get("referrer", ""),
+                                ua=m.get("userAgent", "")
+                            ))
+                            resp = json.dumps({"ok": True}).encode("utf-8")
+                            conn.sendall(struct.pack("=I", len(resp)) + resp)
+                    except Exception:
+                        pass
+                    finally:
+                        conn.close()
+            except Exception:
+                pass
+
+        threading.Thread(target=run_server, daemon=True).start()
+
+
+def run_gui(args, EngineClass, fmt_size_func=None):
+    app = ArtoDownloaderApp(args, EngineClass)
+    app.mainloop()
