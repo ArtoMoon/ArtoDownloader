@@ -370,16 +370,6 @@ def main():
     p.add_argument("--dir", default="")
     p.add_argument("--connections", type=int, default=8)
     args = p.parse_args()
-    if not args.url:  # Başlat menüsünden açıldıysa URL sor
-        import tkinter as tk
-        from tkinter import simpledialog
-        r = tk.Tk()
-        r.withdraw()
-        r.attributes("-topmost", True)
-        args.url = (simpledialog.askstring("ArtoDownloader", "İndirme bağlantısını yapıştırın:", parent=r) or "").strip()
-        r.destroy()
-        if not args.url.lower().startswith(("http://", "https://")):
-            return
     from ui import run_gui
     run_gui(args, Engine, fmt_size)
 

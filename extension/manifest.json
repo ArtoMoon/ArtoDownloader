@@ -1,11 +1,28 @@
 {
   "manifest_version": 2,
   "name": "ArtoDownloader",
-  "version": "1.0",
-  "description": "İndirmeleri yakalar ve çok parçalı indirme uygulamasına devreder.",
-  "permissions": ["downloads", "nativeMessaging", "cookies", "<all_urls>"],
-  "background": { "scripts": ["background.js"] },
+  "version": "1.1",
+  "description": "IDM mantığıyla çalışan çok parçalı indirme yöneticisi eklentisi.",
+  "permissions": [
+    "downloads",
+    "nativeMessaging",
+    "cookies",
+    "webRequest",
+    "webRequestBlocking",
+    "contextMenus",
+    "<all_urls>"
+  ],
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "background": {
+    "scripts": ["background.js"]
+  },
   "browser_specific_settings": {
-    "gecko": { "id": "artodownloader@local" }
+    "gecko": {
+      "id": "artodownloader@local"
+    }
   }
 }

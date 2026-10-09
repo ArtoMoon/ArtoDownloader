@@ -1,25 +1,31 @@
-﻿# ArtoDownloader derleme: exe'ler + kurulum dosyası (dist\ArtoDownloader-Setup.exe)
+# ArtoDownloader derleme: exe'ler + kurulum dosyası (dist\ArtoDownloader-Setup.exe)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 function Check($what) { if ($LASTEXITCODE -ne 0) { throw "$what başarısız (kod $LASTEXITCODE)" } }
 
-$icon = Join-Path $PSScriptRoot "assets\icon.ico"
+$icon = "$PSScriptRoot\assets\icon.ico"
+$iconPng = "$PSScriptRoot\assets\icon.png"
 
 python make_icon.py; Check "İkon"
 
+New-Item -ItemType Directory -Force build\assets | Out-Null
+Copy-Item $icon build\assets\icon.ico -Force
+
 # Eklenti paketi
-Compress-Archive -Path .\extension\manifest.json, .\extension\background.js -DestinationPath .\artodownloader.zip -Force
+Copy-Item $iconPng extension\icon.png -Force
+Compress-Archive -Path .\extension\manifest.json, .\extension\background.js, .\extension\icon.png -DestinationPath .\artodownloader.zip -Force
 Copy-Item .\artodownloader.zip .\artodownloader.xpi -Force
 
-# Arayüz uygulaması (pencereli)
+# Arayüz uygulaması (pencereli + sistem tepsisi)
 python -m PyInstaller --noconfirm --clean --onedir --windowed --name ArtoDownloader `
-    --icon $icon --paths host --hidden-import ui --add-data "$icon;assets" `
+    --icon "$icon" --paths host --hidden-import ui --hidden-import pystray --hidden-import PIL `
+    --add-data "$icon;assets" --add-data "$iconPng;assets" `
     --distpath build\dist --workpath build\work --specpath build host\app.py
 Check "ArtoDownloader derlemesi"
 
 # Native host (konsol: stdin/stdout gerekli), küçük tutmak için tkinter yok
 python -m PyInstaller --noconfirm --clean --onedir --console --name ArtoHost `
-    --icon $icon --exclude-module tkinter `
+    --icon "$icon" --exclude-module tkinter `
     --distpath build\dist --workpath build\work --specpath build host\host.py
 Check "ArtoHost derlemesi"
 
@@ -30,5 +36,3 @@ if (-not $iscc) { throw "Inno Setup 6 bulunamadı: winget install JRSoftware.Inn
 & $iscc setup.iss
 Check "Kurulum paketi"
 Write-Host "Hazır: dist\ArtoDownloader-Setup.exe"
-
-
